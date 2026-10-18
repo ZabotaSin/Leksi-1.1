@@ -8,9 +8,6 @@ on:
 permissions:
   contents: read
 
-env:
-  ANDROID_PROJECT_ZIP: Leksi_Offline_Android_Project_v1.1.1_Fix.zip
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -18,14 +15,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Refresh source from the fixed Leksi ZIP
+      - name: Extract existing Leksi project ZIP
         shell: bash
         run: |
           set -euo pipefail
-          ZIP_FILE="$ANDROID_PROJECT_ZIP"
+          ZIP_FILE="Leksi_Offline_Android_Project_v1.1.0.zip"
           if [ ! -f "$ZIP_FILE" ]; then
-            echo "Expected $ZIP_FILE in the repository root. Upload the fixed project ZIP first."
-            echo "ZIP files currently in the root:"
+            echo "ERROR: Could not find $ZIP_FILE in the repository root."
+            echo "ZIP files in root:"
             find . -maxdepth 1 -type f -iname '*.zip' -print || true
             exit 1
           fi
@@ -34,17 +31,31 @@ jobs:
           unzip -q "$ZIP_FILE" -d .leksi_unpack
           PROJECT_ROOT="$(find .leksi_unpack -name settings.gradle.kts -printf '%h\n' | head -n 1)"
           if [ -z "$PROJECT_ROOT" ]; then
-            echo "ERROR: ZIP does not contain settings.gradle.kts"
+            echo "ERROR: settings.gradle.kts was not found inside the ZIP."
             exit 1
           fi
-          echo "Using project source from: $PROJECT_ROOT"
           cp -R "$PROJECT_ROOT"/. .
-          echo "Checking DAILY branch in source:"
-          grep -n -A2 -B2 'StudyMode.DAILY' app/src/main/java/app/leksi/offline/MainActivity.kt
-          if ! grep -q 'StudyMode.DAILY' app/src/main/java/app/leksi/offline/MainActivity.kt; then
-            echo "ERROR: Updated MainActivity.kt does not contain the DAILY branch."
-            exit 1
-          fi
+
+      - name: Patch missing DAILY branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/app/leksi/offline/MainActivity.kt')
+          s = p.read_text(encoding='utf-8')
+          marker = '} else when (mode) {\n            StudyMode.CARDS -> {'
+          replacement = '} else when (mode) {\n            // DAILY content is displayed by DailyChallengeScreen above.\n            StudyMode.DAILY -> Unit\n            StudyMode.CARDS -> {'
+          if 'StudyMode.DAILY -> Unit' not in s:
+              if marker not in s:
+                  raise SystemExit('ERROR: Expected when(mode) block not found; source layout differs.')
+              s = s.replace(marker, replacement, 1)
+              p.write_text(s, encoding='utf-8')
+          if 'StudyMode.DAILY -> Unit' not in p.read_text(encoding='utf-8'):
+              raise SystemExit('ERROR: DAILY branch patch failed.')
+          print('Verified: StudyMode.DAILY branch exists.')
+          PY
+          grep -n -A4 -B2 'StudyMode.DAILY -> Unit' app/src/main/java/app/leksi/offline/MainActivity.kt
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -66,4 +77,3 @@ jobs:
           name: Leksi-debug-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-
