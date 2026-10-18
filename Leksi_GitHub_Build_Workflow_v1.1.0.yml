@@ -1,0 +1,52 @@
+name: Build Leksi APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Extract project ZIP if uploaded as a single file
+        shell: bash
+        run: |
+          if [ ! -f settings.gradle.kts ]; then
+            ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*.zip' | head -n 1)"
+            if [ -z "$ZIP_FILE" ]; then
+              echo "Could not find settings.gradle.kts or a project ZIP in the repository root."
+              exit 1
+            fi
+            mkdir -p .project_unpack
+            unzip -q "$ZIP_FILE" -d .project_unpack
+            PROJECT_ROOT="$(find .project_unpack -name settings.gradle.kts -printf '%h\n' | head -n 1)"
+            if [ -z "$PROJECT_ROOT" ]; then
+              echo "The ZIP does not contain settings.gradle.kts."
+              exit 1
+            fi
+            cp -R "$PROJECT_ROOT"/. .
+          fi
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build debug APK
+        run: gradle assembleDebug
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Leksi-debug-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
